@@ -1,0 +1,20 @@
+# Workspace / build output
+kernel_workspace/
+*.ko
+*.img
+*.zip
+*.tar.gz
+*.tar.xz
+
+# ccache
+.ccache/
+
+# Python
+__pycache__/
+*.pyc
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  shellcheck:
+    name: ShellCheck scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends shellcheck
+      - name: Run shellcheck
+        run: |
+          fail=0
+          while IFS= read -r f; do
+            printf '== %s\n' "$f"
+            shellcheck -S warning "$f" || fail=1
+          done < <(find scripts anykernel -name '*.sh' -type f)
+          exit $fail
+
+  actionlint:
+    name: Lint workflows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker://rhysd/actionlint:latest
+        with:
+          args: -color
+
+  config-check:
+    name: Validate config profiles
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve every profile through the real config parser
+        run: |
+          fail=0
+          for f in config.env config/*.env; do
+            printf '== %s\n' "$f"
+            if ! CONFIG_ENV="$f" bash scripts/config.sh; then
+              echo "profile $f failed to resolve"; fail=1
+            fi
+          done
+          exit $fail

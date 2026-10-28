@@ -106,14 +106,17 @@ make_args() {
 
 build_kernel() {
 	group "Building kernel ${KERNEL_SOURCE_BRANCH}"
-	export PATH="${CLANG_PATH:?CLANG_PATH must be set}:${PATH}"
+	export PATH="${CLANG_PATH:?CLANG_PATH must be set}/bin:${PATH}"
+	export_env PATH "$PATH"
 	export KBUILD_BUILD_HOST=${KBUILD_BUILD_HOST:-Github-Action}
 	export KBUILD_BUILD_USER=${KBUILD_BUILD_USER:-ksun-susfs-builder}
 
-	local cc="clang" args
+	# Use the absolute clang path so ccache and make subprocesses (/bin/sh)
+	# always find the compiler, even when free-disk-space removed system clang.
+	local cc="${CLANG_PATH}/bin/clang" args
 	args=$(make_args)
 	if is_true "${ENABLE_CCACHE:-true}" && command -v ccache >/dev/null; then
-		cc="ccache clang"
+		cc="ccache ${CLANG_PATH}/bin/clang"
 		export CCACHE_DIR="${CCACHE_DIR:-${WORKSPACE}/.ccache}"
 		info "ccache enabled (dir: ${CCACHE_DIR})"
 	fi

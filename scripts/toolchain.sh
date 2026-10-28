@@ -50,6 +50,14 @@ if [ ! -x "${CLANG_PATH}/bin/clang" ]; then
 fi
 
 export_env CLANG_PATH "$CLANG_PATH"
+
+# Persist the updated PATH so that later workflow steps (ccache-action,
+# build.sh) and their child processes (make → /bin/sh → ccache → clang)
+# all find the clang binary. free-disk-space removes the system clang
+# packages, so CLANG_PATH/bin must be on PATH for every subsequent step.
+export PATH="${CLANG_PATH}/bin:${PATH}"
+export_env PATH "$PATH"
+
 ok "clang ready: ${CLANG_PATH}/bin/clang"
 "${CLANG_PATH}/bin/clang" --version | head -n2 || true
 endgroup

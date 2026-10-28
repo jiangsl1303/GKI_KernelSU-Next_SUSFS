@@ -54,7 +54,7 @@ jobs:
       CONFIG_ENV: ${{ matrix.profile }}
       CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
       CCACHE_NOHASHDIR: "true"
-      CCACHE_HARDLINK: "true"
+      CCACHE_HARDLINK: "false"
       IN_KSU_VARIANT: kernelsu-next
     steps:
       - uses: actions/checkout@v4

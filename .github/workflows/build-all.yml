@@ -52,9 +52,6 @@ jobs:
     env:
       WORKSPACE: ${{ github.workspace }}/kernel_workspace
       CONFIG_ENV: ${{ matrix.profile }}
-      CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
-      CCACHE_NOHASHDIR: "true"
-      CCACHE_HARDLINK: "false"
       IN_KSU_VARIANT: kernelsu-next
     steps:
       - uses: actions/checkout@v4
@@ -84,12 +81,37 @@ jobs:
 
       - name: Install build dependencies
         run: |
+          set -euo pipefail
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
             bc bison build-essential ccache cpio curl device-tree-compiler flex \
-            git libelf-dev libssl-dev lz4 make python3 rsync unzip zip zstd \
-            libncurses-dev libdw-dev dwarves
+            git libelf-dev libssl-dev lz4 make patch python3 rsync unzip zip zstd \
+            libncurses-dev libdw-dev dwarves pkg-config
+          # pahole (from dwarves) is required by CONFIG_DEBUG_INFO_BTF.
+          # libdw-dev provides dwarf.h, required by gendwarfksyms on Linux 6.12+.
+          command -v pahole >/dev/null || sudo apt-get install -y pahole
           mkdir -p "$WORKSPACE"
+
+      - name: Verify build tools
+        run: |
+          set -euo pipefail
+          rc=0
+          for t in pahole bc bison flex ccache cpio dtc lz4 zstd make patch python3; do
+            p=$(command -v "$t" 2>/dev/null || true)
+            if [ -n "$p" ]; then
+              printf '  %-8s %s\n' "$t" "$p"
+            else
+              printf '  %-8s MISSING\n' "$t"
+              rc=1
+            fi
+          done
+          if [ -f /usr/include/dwarf.h ]; then
+            echo "  dwarf.h  /usr/include/dwarf.h"
+          else
+            echo "  dwarf.h  MISSING (needed by gendwarfksyms on 6.12+)"
+          fi
+          pahole --version || true
+          exit "$rc"
 
       - name: Set up toolchain
         run: bash scripts/toolchain.sh
@@ -104,12 +126,39 @@ jobs:
       - name: Apply kernel patches
         run: bash scripts/patches.sh
 
-      - name: Set up ccache
+      # ccache is an accelerator, never a build dependency. A third-party
+      # action here once failed in 1s and killed all 5 matrix jobs before the
+      # compiler ever ran, so the cache is restored with the first-party
+      # actions/cache and configured with plain shell. Both are non-fatal.
+      - name: Restore ccache
         if: env.ENABLE_CCACHE == 'true'
-        uses: hendrikmuhs/ccache-action@v1.2
+        continue-on-error: true
+        uses: actions/cache@v4
         with:
-          key: kernel-${{ env.DEVICE }}-${{ env.KSU_VARIANT }}-${{ env.KSU_REF_RESOLVED }}
-          max-size: 2G
+          path: ${{ env.WORKSPACE }}/.ccache
+          key: ccache-${{ matrix.label }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ matrix.label }}-
+            ccache-
+
+      - name: Configure ccache
+        if: env.ENABLE_CCACHE == 'true'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          mkdir -p "$WORKSPACE/.ccache"
+          export CCACHE_DIR="$WORKSPACE/.ccache"
+          {
+            echo "CCACHE_DIR=$WORKSPACE/.ccache"
+            echo "CCACHE_MAXSIZE=2G"
+            echo "CCACHE_NOHASHDIR=true"
+            echo "CCACHE_HARDLINK=false"
+            echo "CCACHE_BASEDIR=$GITHUB_WORKSPACE"
+          } >> "$GITHUB_ENV"
+          ccache --version | head -n1 || true
+          ccache -o max_size=2G || true
+          ccache -o hard_link=false || true
+          ccache -z || true
 
       - name: Build kernel
         run: bash scripts/build.sh all

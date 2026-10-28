@@ -27,14 +27,15 @@ build_susfs_lkm() {
        KernelSU-Next (dev branch) ships SUSFS under kernel/susfs/; make sure
        KSU_REF points at a ref that contains it (dev)."
 
-	export PATH="${CLANG_PATH:?CLANG_PATH must be set}:${PATH}"
+	export PATH="${CLANG_PATH:?CLANG_PATH must be set}/bin:${PATH}"
+	local cc="${CLANG_PATH}/bin/clang"
 
 	# 1. modules_prepare: prepares the out/ tree for external module builds
 	#    (Module.symvers, .config, scripts rebuilt).
 	(
 		cd "$KERNEL_DIR"
 		info "make modules_prepare"
-		make -j"$(nproc --all)" O="$OUT" ARCH="$ARCH" CC=clang LLVM=1 LLVM_IAS=1 \
+		make -j"$(nproc --all)" O="$OUT" ARCH="$ARCH" CC="$cc" LLVM=1 LLVM_IAS=1 \
 			modules_prepare
 	) || die "modules_prepare failed"
 
@@ -45,7 +46,7 @@ build_susfs_lkm() {
 		cd "$KERNEL_DIR"
 		info "building susfs_guard_lkm.ko against ${OUT}"
 		make -j"$(nproc --all)" -C "$OUT" M="$SUSFS_SRC" ARCH="$ARCH" \
-			CC=clang LLVM=1 LLVM_IAS=1 modules
+			CC="$cc" LLVM=1 LLVM_IAS=1 modules
 	) || die "SUSFS LKM build failed"
 
 	# 3. Collect the artifact and record its version.

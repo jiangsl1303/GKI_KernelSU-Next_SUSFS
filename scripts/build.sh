@@ -75,6 +75,14 @@ prepare_defconfig() {
 
 	is_true "${DISABLE_CC_WERROR:-false}" && kconf_disable "$DEFCONFIG_PATH" CONFIG_CC_WERROR
 
+	# CONFIG_DEBUG_INFO_BTF needs pahole (dwarves). Without it the build dies
+	# at `vmlinux` with "pahole is not available", so degrade instead of fail.
+	if ! command -v pahole >/dev/null 2>&1; then
+		warn "pahole not found; disabling CONFIG_DEBUG_INFO_BTF for this build"
+		kconf_set_many "$DEFCONFIG_PATH" \
+			CONFIG_DEBUG_INFO_BTF=n CONFIG_DEBUG_INFO_BTF_MODULES=n
+	fi
+
 	if [ -n "${EXTRA_DEFCONFIG:-}" ]; then
 		local kv
 		for kv in $(printf '%s' "$EXTRA_DEFCONFIG" | tr '\n' ' '); do
@@ -116,9 +124,20 @@ build_kernel() {
 	local cc="${CLANG_PATH}/bin/clang" args
 	args=$(make_args)
 	if is_true "${ENABLE_CCACHE:-true}" && command -v ccache >/dev/null; then
-		cc="ccache ${CLANG_PATH}/bin/clang"
 		export CCACHE_DIR="${CCACHE_DIR:-${WORKSPACE}/.ccache}"
-		info "ccache enabled (dir: ${CCACHE_DIR})"
+		export CCACHE_MAXSIZE="${CCACHE_MAXSIZE:-2G}"
+		# Hardlinking the cached object into the build tree fails with
+		# EPERM when cache and out/ live on different filesystems.
+		export CCACHE_HARDLINK=false
+		mkdir -p "$CCACHE_DIR"
+		# End-to-end smoke test of the wrapper. A broken cache must degrade to
+		# plain clang instead of turning into a failed kernel build.
+		if ccache "${CLANG_PATH}/bin/clang" --version >/dev/null 2>&1; then
+			cc="ccache ${CLANG_PATH}/bin/clang"
+			info "ccache enabled (dir: ${CCACHE_DIR})"
+		else
+			warn "ccache smoke test failed; continuing without ccache"
+		fi
 	fi
 
 	cd "$KERNEL_DIR"

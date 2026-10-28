@@ -1,0 +1,19 @@
+# Normalize line endings: all text files use LF in the repo.
+# Critical for shell scripts and YAML workflows consumed by GitHub Actions
+# (CRLF causes bash parsing errors and YAML failures on ubuntu-latest).
+* text=auto eol=lf
+
+# Explicitly force LF for shell scripts and workflows
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.env text eol=lf
+*.md text eol=lf
+
+# Binary files
+*.zip binary
+*.img binary
+*.ko binary
+*.gz binary
+*.xz binary
+*.zst binary

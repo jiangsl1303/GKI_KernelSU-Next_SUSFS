@@ -1,0 +1,218 @@
+name: Build All Kernels
+
+# ============================================================================
+# Build every GKI profile in the repo as a matrix, publish a combined Release.
+#
+# Triggers:
+#   - schedule: every Monday 02:00 UTC (10:00 Beijing time)
+#   - workflow_dispatch: manual run, with options to skip Release and choose
+#     a subset of profiles
+# ============================================================================
+
+on:
+  schedule:
+    # Every Monday at 02:00 UTC = 10:00 CST (Beijing)
+    - cron: '0 2 * * 1'
+
+  workflow_dispatch:
+    inputs:
+      profiles:
+        description: "Profiles to build (comma-separated, blank = all)"
+        required: false
+        default: ""
+        type: string
+      publish_release:
+        description: "Publish a combined GitHub Release with all artifacts"
+        required: false
+        default: true
+        type: boolean
+      ksu_ref:
+        description: "KernelSU-Next ref override (blank = profile default: dev)"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-all-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ------------------------------------------------------------------ resolve
+  # Enumerate the profile list (either from the input or all config/*.env),
+  # then emit a JSON matrix for the build job.
+  resolve:
+    name: Resolve profiles
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.gen.outputs.matrix }}
+      build_date: ${{ steps.gen.outputs.build_date }}
+      profile_count: ${{ steps.gen.outputs.profile_count }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate build matrix
+        id: gen
+        run: |
+          set -euo pipefail
+          INPUT_PROFILES="${{ inputs.profiles }}"
+
+          # Discover all profiles if no subset given.
+          if [ -z "$INPUT_PROFILES" ]; then
+            PROFILES=$(find config -maxdepth 1 -name '*.env' -type f | sort | tr '\n' ' ')
+          else
+            # Split comma-separated input, trim whitespace, validate existence.
+            PROFILES=""
+            IFS=','
+            for p in $INPUT_PROFILES; do
+              p=$(echo "$p" | xargs)  # trim
+              [ -z "$p" ] && continue
+              if [ ! -f "$p" ]; then
+                echo "::error::profile not found: $p"
+                exit 1
+              fi
+              PROFILES="$PROFILES $p"
+            done
+            unset IFS
+          fi
+
+          [ -z "$PROFILES" ] && { echo "::error::no profiles found"; exit 1; }
+
+          # Build JSON matrix array: [{"profile":"config/android15-6.6.env","label":"android15-6.6"}, ...]
+          JSON="["
+          FIRST=1
+          COUNT=0
+          for p in $PROFILES; do
+            [ -z "$p" ] && continue
+            LABEL=$(basename "${p%.env}")
+            if [ "$FIRST" -eq 1 ]; then
+              FIRST=0
+            else
+              JSON="$JSON,"
+            fi
+            JSON="$JSON{\"profile\":\"$p\",\"label\":\"$LABEL\"}"
+            COUNT=$((COUNT + 1))
+          done
+          JSON="$JSON]"
+
+          echo "matrix=$JSON" >> "$GITHUB_OUTPUT"
+          echo "profile_count=$COUNT" >> "$GITHUB_OUTPUT"
+          echo "build_date=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+
+          echo "::notice::Resolved $COUNT profiles: $(echo "$PROFILES" | tr ' ' ',')"
+
+  # -------------------------------------------------------------------- build
+  # One job per profile, calling the reusable build-kernel workflow.
+  build:
+    name: Build ${{ matrix.label }}
+    needs: resolve
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.resolve.outputs.matrix) }}
+    uses: ./.github/workflows/build-kernel.yml
+    with:
+      config: ${{ matrix.profile }}
+      ksu_ref: ${{ inputs.ksu_ref || '' }}
+      hook_mode: config
+      susfs: config
+      publish_release: false
+    permissions:
+      contents: read
+
+  # ------------------------------------------------------------------ release
+  # Collect all artifacts from the matrix builds and publish a single Release.
+  release:
+    name: Publish combined release
+    needs: [resolve, build]
+    if: github.event_name == 'schedule' || inputs.publish_release == true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: false
+
+      - name: Organize and package artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p release
+
+          echo "### Artifacts downloaded:" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          # Each artifact is a directory under artifacts/.
+          # Package AnyKernel3 dirs into zips, copy raw files alongside.
+          shopt -s nullglob
+          for dir in artifacts/*/; do
+            name=$(basename "${dir%/}")
+            echo "- $name" >> "$GITHUB_STEP_SUMMARY"
+
+            # If the artifact looks like an AnyKernel3 dir (has anykernel.sh or tools/),
+            # zip it as a flashable package.
+            if [ -f "${dir}anykernel.sh" ] || [ -d "${dir}tools" ]; then
+              (cd "$dir" && zip -qr9 "${GITHUB_WORKSPACE}/release/${name}.zip" .)
+              echo "  -> packaged as ${name}.zip"
+            else
+              # Copy individual files (Image, boot.img, dtbo.img, *.ko, etc.)
+              for f in "${dir}"*; do
+                [ -f "$f" ] && cp "$f" "release/$(basename "$f")"
+              done
+            fi
+          done
+
+          # List final release contents
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Release contents:" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          ls -la release/ >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Create combined release
+        uses: softprops/action-gh-release@72f2c25fcb47643c292f7107632f7a47c1df5cd8 # v2.3.2
+        with:
+          tag_name: gki-all-${{ needs.resolve.outputs.build_date }}
+          name: GKI All Profiles · ${{ needs.resolve.outputs.build_date }}
+          body: |
+            ## GKI KernelSU-Next + SUSFS — All Profiles Build
+
+            **Build date:** ${{ needs.resolve.outputs.build_date }}
+            **Profiles built:** ${{ needs.resolve.outputs.profile_count }}
+
+            ### Downloads
+
+            Each `AnyKernel3-*.zip` is a flashable package for the corresponding GKI kernel version.
+            Pick the one matching your device's Android / kernel version:
+
+            | File | Kernel | Android |
+            | --- | --- | --- |
+            | AnyKernel3-*-android13-5.10-* | Linux 5.10 | Android 13 |
+            | AnyKernel3-*-android13-5.15-* | Linux 5.15 | Android 13 |
+            | AnyKernel3-*-android14-6.1-*  | Linux 6.1  | Android 14 |
+            | AnyKernel3-*-android15-6.6-*  | Linux 6.6  | Android 15 |
+            | AnyKernel3-*-android16-6.12-* | Linux 6.12 | Android 16 |
+
+            ### Flashing
+
+            1. Flash the `AnyKernel3-*.zip` from a custom recovery (TWRP/OrangeFox) or with KernelFlasher.
+            2. After boot, install the [KernelSU-Next manager](https://github.com/KernelSU-Next/KernelSU-Next/releases).
+            3. Load SUSFS: `ksud insmod /data/adb/ksu/susfs_guard_lkm.ko`
+
+            ### Notes
+
+            - These are **generic GKI** kernels — they work on devices whose boot partition
+              accepts a GKI kernel (Pixel, most GSI/custom-ROM phones). Device-specific vendor
+              kernels (OnePlus, Samsung, etc.) need a separate profile under `config/`.
+            - SUSFS is built as an LKM (`susfs_guard_lkm.ko`) and loaded at runtime; it is
+              included inside each AnyKernel3 zip under `/data/adb/ksu/`.
+            - Built automatically every Monday 10:00 CST, or on manual trigger.
+          files: release/*
+          make_latest: true

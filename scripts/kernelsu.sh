@@ -110,23 +110,35 @@ install_ksun() {
 
 	ok "KernelSU-Next installed at ${head_desc} (${head_sha})"
 
-	# --- make the KSU uapi headers reachable on every kernel ----------------
-	# kernel/include/uapi is a *relative* symlink to ../../uapi. On 6.12 kbuild
-	# hands the compiler an absolute $(src), so `#include "uapi/app_profile.h"`
-	# is resolved lexically through the drivers/kernelsu symlink and the nested
-	# relative symlink no longer lands on KernelSU-Next/uapi:
-	#   drivers/kernelsu/include/uapi/../../uapi  ->  KernelSU-Next/kernel/uapi
-	# 5.10 / 5.15 / 6.1 / 6.6 happen to resolve it, 6.12 does not. Pin the real
-	# directories instead of relying on symlink traversal: with
-	# -I<KSU root>, "uapi/app_profile.h" matches <KSU root>/uapi directly.
+	# --- pin KSU source paths against relative-srctree kbuild -----------------
+	# Two separate breakages, both from resolving paths through the
+	# drivers/kernelsu symlink with a *relative* srctree (6.12 keeps srctree
+	# relative inside sub-makes, older trees make it absolute):
+	#
+	#   a) `#include "uapi/app_profile.h"` -> not found, because
+	#      kernel/include/uapi is itself a relative symlink to ../../uapi and
+	#      the lexical `..` lands on KernelSU-Next/kernel/uapi.
+	#   b) the preinit rule's prerequisite $(KSU_KERNEL_DIR)/preinit/runner/
+	#      runner.c expands to ../../drivers/kernelsu/... , which from the
+	#      object directory points into out/ and has no rule:
+	#      "No rule to make target '../../drivers/kernelsu/preinit/runner/runner.c'"
+	#
+	# Pinning KSU_KERNEL_DIR to the real absolute source directory fixes both
+	# upstream of the flags, and adding the concrete include dirs covers (a)
+	# even if the pin is ever reverted. Both steps are idempotent.
 	local ksu_kbuild="$ksu_dir/kernel/Kbuild"
-	if [ -f "$ksu_kbuild" ] && ! grep -q 'KSU_EXTRA_INC' "$ksu_kbuild"; then
-		{
-			printf '\n# KSU_EXTRA_INC: concrete include dirs appended by the build script\n'
-			printf 'ccflags-y += -I%s -I%s/kernel -I%s/kernel/include\n' \
-				"$ksu_dir" "$ksu_dir" "$ksu_dir"
-		} >>"$ksu_kbuild"
-		info "pinned KSU include dirs in $(basename "$ksu_kbuild")"
+	if [ -f "$ksu_kbuild" ]; then
+		sed -i -E "s@^KSU_KERNEL_DIR := .*@KSU_KERNEL_DIR := ${ksu_dir}/kernel@" "$ksu_kbuild"
+		grep -q 'KSU_KERNEL_DIR := ' "$ksu_kbuild" \
+			|| die "could not pin KSU_KERNEL_DIR in ${ksu_kbuild}"
+		if ! grep -q 'KSU_EXTRA_INC' "$ksu_kbuild"; then
+			{
+				printf '\n# KSU_EXTRA_INC: concrete include dirs appended by the build script\n'
+				printf 'ccflags-y += -I%s -I%s/kernel -I%s/kernel/include\n' \
+					"$ksu_dir" "$ksu_dir" "$ksu_dir"
+			} >>"$ksu_kbuild"
+		fi
+		info "pinned KSU_KERNEL_DIR and include dirs in $(basename "$ksu_kbuild")"
 	fi
 
 	# --- publish facts later steps need ------------------------------------

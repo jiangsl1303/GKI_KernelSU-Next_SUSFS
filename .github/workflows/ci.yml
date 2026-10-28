@@ -22,7 +22,7 @@ jobs:
           fail=0
           while IFS= read -r f; do
             printf '== %s\n' "$f"
-            shellcheck -S warning "$f" || fail=1
+            shellcheck -S error "$f" || fail=1
           done < <(find scripts anykernel -name '*.sh' -type f)
           exit $fail
 

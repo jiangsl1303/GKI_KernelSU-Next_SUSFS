@@ -97,9 +97,11 @@ jobs:
           done
           JSON="$JSON]"
 
-          echo "matrix=$JSON" >> "$GITHUB_OUTPUT"
-          echo "profile_count=$COUNT" >> "$GITHUB_OUTPUT"
-          echo "build_date=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+          {
+            echo "matrix=$JSON"
+            echo "profile_count=$COUNT"
+            echo "build_date=$(date -u +%Y%m%d)"
+          } >> "$GITHUB_OUTPUT"
 
           echo "::notice::Resolved $COUNT profiles: $(echo "$PROFILES" | tr ' ' ',')"
 
@@ -145,8 +147,10 @@ jobs:
           set -euo pipefail
           mkdir -p release
 
-          echo "### Artifacts downloaded:" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "### Artifacts downloaded:"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
 
           # Each artifact is a directory under artifacts/.
           # Package AnyKernel3 dirs into zips, copy raw files alongside.
@@ -169,12 +173,14 @@ jobs:
           done
 
           # List final release contents
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "### Release contents:" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          ls -la release/ >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo ""
+            echo "### Release contents:"
+            echo ""
+            echo '```'
+            ls -la release/
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Create combined release
         uses: softprops/action-gh-release@72f2c25fcb47643c292f7107632f7a47c1df5cd8 # v2.3.2

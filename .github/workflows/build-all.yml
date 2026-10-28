@@ -40,7 +40,6 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-jobs:
   # -------------------------------------------------------------------- build
   # One job per profile, calling the reusable build-kernel workflow.
   # The matrix is hardcoded because GitHub Actions does not support dynamic

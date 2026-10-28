@@ -92,6 +92,29 @@ jobs:
           command -v pahole >/dev/null || sudo apt-get install -y pahole
           mkdir -p "$WORKSPACE"
 
+      # Linux 6.12 emits BTF that pahole 1.25 (Ubuntu noble) cannot round-trip:
+      # `make vmlinux` dies at `BTFIDS vmlinux` with
+      # "FAILED: load BTF from vmlinux: Invalid argument". 5.10 / 5.15 / 6.1 /
+      # 6.6 are fine with the distro pahole, so only 6.12 pays for the build.
+      - name: Build pahole from source (6.12+)
+        if: matrix.label == 'android16-6.12'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y --no-install-recommends cmake zlib1g-dev libbz2-dev
+          git clone -q --depth=1 https://github.com/acmel/dwarves.git "$RUNNER_TEMP/dwarves"
+          cmake -S "$RUNNER_TEMP/dwarves" -B "$RUNNER_TEMP/dwarves/build" \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local
+          cmake --build "$RUNNER_TEMP/dwarves/build" -j"$(nproc --all)"
+          sudo cmake --install "$RUNNER_TEMP/dwarves/build"
+          hash -r
+          echo "pahole now: $(command -v pahole)"
+          pahole --version
+          case "$(command -v pahole)" in
+            /usr/local/bin/*) echo "ok: /usr/local/bin/pahole wins over apt's 1.25" ;;
+            *) echo "::warning::/usr/local/bin/pahole is not first in PATH; 6.12 BTF will be disabled" ;;
+          esac
+
       - name: Verify build tools
         run: |
           set -euo pipefail

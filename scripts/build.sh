@@ -77,8 +77,20 @@ prepare_defconfig() {
 
 	# CONFIG_DEBUG_INFO_BTF needs pahole (dwarves). Without it the build dies
 	# at `vmlinux` with "pahole is not available", so degrade instead of fail.
+	#
+	# Version matters too: 6.12 emits BTF that pahole 1.25 (Ubuntu noble)
+	# cannot round-trip, and `BTFIDS vmlinux` then aborts with
+	# "FAILED: load BTF from vmlinux: Invalid argument". The workflow builds a
+	# newer pahole for 6.12; if that build ever fails we still want a kernel,
+	# so drop BTF rather than the whole job.
+	local pahole_ver
+	pahole_ver=$(pahole --version 2>/dev/null | head -n1 | sed 's/^v//' || true)
 	if ! command -v pahole >/dev/null 2>&1; then
 		warn "pahole not found; disabling CONFIG_DEBUG_INFO_BTF for this build"
+		kconf_set_many "$DEFCONFIG_PATH" \
+			CONFIG_DEBUG_INFO_BTF=n CONFIG_DEBUG_INFO_BTF_MODULES=n
+	elif ver_ge "$kver" "6.12" && ! ver_ge "$pahole_ver" "1.26"; then
+		warn "pahole '${pahole_ver:-unknown}' is too old for kernel ${kver}; disabling CONFIG_DEBUG_INFO_BTF"
 		kconf_set_many "$DEFCONFIG_PATH" \
 			CONFIG_DEBUG_INFO_BTF=n CONFIG_DEBUG_INFO_BTF_MODULES=n
 	fi

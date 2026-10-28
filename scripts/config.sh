@@ -55,6 +55,11 @@ load_profile() {
 			\"*\"|\'*\') val=${val:1:${#val}-2} ;;
 		esac
 		export "${key}=${val}"
+		# Persist to $GITHUB_ENV so the variable survives into later
+		# workflow steps (export alone only lives within this shell).
+		if [ -n "${GITHUB_ENV:-}" ] && [ -w "${GITHUB_ENV}" ]; then
+			printf '%s=%s\n' "$key" "$val" >>"$GITHUB_ENV"
+		fi
 	done <"$file"
 }
 
@@ -119,6 +124,27 @@ BUILD_TIME=$(date -u +%Y%m%d-%H%M%S)
 export_env BUILD_TIME "$BUILD_TIME"
 
 export_env PROFILE "$PROFILE"
+
+# Persist all profile + derived variables to $GITHUB_ENV so later workflow
+# steps (toolchain.sh, source.sh, etc.) can see them. load_profile and the
+# ${VAR:=default} assignments above only export within this shell process.
+for _v in \
+	KERNEL_SOURCE KERNEL_SOURCE_BRANCH KERNEL_CONFIG KERNEL_IMAGE_NAME \
+	ARCH KERNEL_NAME KERNEL_NAME_SUFFIX ADD_LOCALVERSION_TO_FILENAME \
+	CLANG_BRANCH CLANG_VERSION USE_LLVM USE_CUSTOM_CLANG CUSTOM_CLANG_SOURCE \
+	EXTRA_CMDS CUSTOM_CMDS \
+	KSU_VARIANT KSU_REF KSU_HOOK_MODE \
+	ENABLE_SUSFS FORCE_KALLSYMS_ALL REMOVE_DIRTY_STRING \
+	BUILD_MODULES REMOVE_PROTECTED_EXPORTS ADD_OVERLAYFS_CONFIG \
+	EXTRA_DEFCONFIG DISABLE_CC_WERROR DISABLE_LTO \
+	NEED_DTBO BUILD_BOOT_IMG SOURCE_BOOT_IMAGE UPLOAD_RAW_IMAGES \
+	ENABLE_CCACHE REMOVE_UNUSED_PACKAGES \
+; do
+	if [ -n "${!_v+x}" ]; then
+		export_env "$_v" "${!_v}"
+	fi
+done
+unset _v
 
 # ------------------------------------------------------------ validation ----
 

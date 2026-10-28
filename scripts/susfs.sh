@@ -42,11 +42,19 @@ build_susfs_lkm() {
 	# 2. Build the module itself against the prepared out/ tree.
 	#    KernelSU-Next's Makefile expects exactly this invocation:
 	#      make -C $KDIR M=$PWD ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 modules
+	#
+	#    KBUILD_MODPOST_WARN=1 is mandatory here, not a workaround: the module
+	#    intentionally references unexported symbols (init_mm, __set_fixmap,
+	#    copy_to_kernel_nofault, task_work_add, saved_boot_config, ...) and
+	#    kernel/susfs/symbol_resolver.c resolves every one of them by name at
+	#    load time through kallsyms/kprobe. modpost can only see the export
+	#    table, so without this flag it aborts with "ERROR: modpost: ...
+	#    undefined!" before the .ko is ever produced.
 	(
 		cd "$KERNEL_DIR"
 		info "building susfs_guard_lkm.ko against ${OUT}"
 		make -j"$(nproc --all)" -C "$OUT" M="$SUSFS_SRC" ARCH="$ARCH" \
-			CC="$cc" LLVM=1 LLVM_IAS=1 modules
+			CC="$cc" LLVM=1 LLVM_IAS=1 KBUILD_MODPOST_WARN=1 modules
 	) || die "SUSFS LKM build failed"
 
 	# 3. Collect the artifact and record its version.

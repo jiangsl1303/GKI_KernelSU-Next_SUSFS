@@ -110,6 +110,25 @@ install_ksun() {
 
 	ok "KernelSU-Next installed at ${head_desc} (${head_sha})"
 
+	# --- make the KSU uapi headers reachable on every kernel ----------------
+	# kernel/include/uapi is a *relative* symlink to ../../uapi. On 6.12 kbuild
+	# hands the compiler an absolute $(src), so `#include "uapi/app_profile.h"`
+	# is resolved lexically through the drivers/kernelsu symlink and the nested
+	# relative symlink no longer lands on KernelSU-Next/uapi:
+	#   drivers/kernelsu/include/uapi/../../uapi  ->  KernelSU-Next/kernel/uapi
+	# 5.10 / 5.15 / 6.1 / 6.6 happen to resolve it, 6.12 does not. Pin the real
+	# directories instead of relying on symlink traversal: with
+	# -I<KSU root>, "uapi/app_profile.h" matches <KSU root>/uapi directly.
+	local ksu_kbuild="$ksu_dir/kernel/Kbuild"
+	if [ -f "$ksu_kbuild" ] && ! grep -q 'KSU_EXTRA_INC' "$ksu_kbuild"; then
+		{
+			printf '\n# KSU_EXTRA_INC: concrete include dirs appended by the build script\n'
+			printf 'ccflags-y += -I%s -I%s/kernel -I%s/kernel/include\n' \
+				"$ksu_dir" "$ksu_dir" "$ksu_dir"
+		} >>"$ksu_kbuild"
+		info "pinned KSU include dirs in $(basename "$ksu_kbuild")"
+	fi
+
 	# --- publish facts later steps need ------------------------------------
 	local version_label
 	version_label=$(git -C "$ksu_dir" describe --exact-match --tags 2>/dev/null || echo "${ref}-${head_sha}")

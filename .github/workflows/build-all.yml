@@ -40,84 +40,31 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # ------------------------------------------------------------------ resolve
-  # Enumerate the profile list (either from the input or all config/*.env),
-  # then emit a JSON matrix for the build job.
-  resolve:
-    name: Resolve profiles
-    runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.gen.outputs.matrix }}
-      build_date: ${{ steps.gen.outputs.build_date }}
-      profile_count: ${{ steps.gen.outputs.profile_count }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Generate build matrix
-        id: gen
-        run: |
-          set -euo pipefail
-          INPUT_PROFILES="${{ inputs.profiles }}"
-
-          # Discover all profiles if no subset given.
-          if [ -z "$INPUT_PROFILES" ]; then
-            PROFILES=$(find config -maxdepth 1 -name '*.env' -type f | sort | tr '\n' ' ')
-          else
-            # Split comma-separated input, trim whitespace, validate existence.
-            PROFILES=""
-            IFS=','
-            for p in $INPUT_PROFILES; do
-              p=$(echo "$p" | xargs)  # trim
-              [ -z "$p" ] && continue
-              if [ ! -f "$p" ]; then
-                echo "::error::profile not found: $p"
-                exit 1
-              fi
-              PROFILES="$PROFILES $p"
-            done
-            unset IFS
-          fi
-
-          [ -z "$PROFILES" ] && { echo "::error::no profiles found"; exit 1; }
-
-          # Build JSON matrix array: [{"profile":"config/android15-6.6.env","label":"android15-6.6"}, ...]
-          JSON="["
-          FIRST=1
-          COUNT=0
-          for p in $PROFILES; do
-            [ -z "$p" ] && continue
-            LABEL=$(basename "${p%.env}")
-            if [ "$FIRST" -eq 1 ]; then
-              FIRST=0
-            else
-              JSON="$JSON,"
-            fi
-            JSON="$JSON{\"profile\":\"$p\",\"label\":\"$LABEL\"}"
-            COUNT=$((COUNT + 1))
-          done
-          JSON="$JSON]"
-
-          {
-            echo "matrix=$JSON"
-            echo "profile_count=$COUNT"
-            echo "build_date=$(date -u +%Y%m%d)"
-          } >> "$GITHUB_OUTPUT"
-
-          echo "::notice::Resolved $COUNT profiles: $(echo "$PROFILES" | tr ' ' ',')"
-
+jobs:
   # -------------------------------------------------------------------- build
   # One job per profile, calling the reusable build-kernel workflow.
+  # The matrix is hardcoded because GitHub Actions does not support dynamic
+  # matrix generation (fromJson) on reusable workflow_call jobs.
   build:
     name: Build ${{ matrix.label }}
-    needs: resolve
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJson(needs.resolve.outputs.matrix) }}
+        include:
+          - profile: config/android13-5.10.env
+            label: android13-5.10
+          - profile: config/android13-5.15.env
+            label: android13-5.15
+          - profile: config/android14-6.1.env
+            label: android14-6.1
+          - profile: config/android15-6.6.env
+            label: android15-6.6
+          - profile: config/android16-6.12.env
+            label: android16-6.12
     uses: ./.github/workflows/build-kernel.yml
     with:
       config: ${{ matrix.profile }}
-      ksu_ref: ${{ inputs.ksu_ref || '' }}
+      ksu_ref: ""
       hook_mode: config
       susfs: config
       publish_release: false
@@ -128,13 +75,17 @@ jobs:
   # Collect all artifacts from the matrix builds and publish a single Release.
   release:
     name: Publish combined release
-    needs: [resolve, build]
-    if: github.event_name == 'schedule' || inputs.publish_release == true
+    needs: build
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.publish_release == true)
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set build date
+        id: date
+        run: echo "build_date=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -185,13 +136,13 @@ jobs:
       - name: Create combined release
         uses: softprops/action-gh-release@72f2c25fcb47643c292f7107632f7a47c1df5cd8 # v2.3.2
         with:
-          tag_name: gki-all-${{ needs.resolve.outputs.build_date }}
-          name: GKI All Profiles · ${{ needs.resolve.outputs.build_date }}
+          tag_name: gki-all-${{ steps.date.outputs.build_date }}
+          name: GKI All Profiles · ${{ steps.date.outputs.build_date }}
           body: |
             ## GKI KernelSU-Next + SUSFS — All Profiles Build
 
-            **Build date:** ${{ needs.resolve.outputs.build_date }}
-            **Profiles built:** ${{ needs.resolve.outputs.profile_count }}
+            **Build date:** ${{ steps.date.outputs.build_date }}
+            **Profiles built:** 5
 
             ### Downloads
 

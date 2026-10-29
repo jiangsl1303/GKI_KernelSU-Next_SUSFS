@@ -103,13 +103,21 @@ jobs:
           set -euo pipefail
           sudo apt-get install -y --no-install-recommends cmake zlib1g-dev libbz2-dev
           git clone -q --depth=1 https://github.com/acmel/dwarves.git "$RUNNER_TEMP/dwarves"
+          # BUILD_SHARED_LIBS=OFF: a static pahole has no libdwarves_emit.so to
+          # find, so kconfig's pahole invocation cannot die with
+          # "error while loading shared libraries: libdwarves_emit.so.1"
+          # (that broke `make gki_defconfig` with a fake init/Kconfig syntax
+          # error, because kconfig prints nothing sane when pahole cannot run).
           cmake -S "$RUNNER_TEMP/dwarves" -B "$RUNNER_TEMP/dwarves/build" \
-            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local \
+            -DBUILD_SHARED_LIBS=OFF
           cmake --build "$RUNNER_TEMP/dwarves/build" -j"$(nproc --all)"
           sudo cmake --install "$RUNNER_TEMP/dwarves/build"
+          # Belt and braces for the shared-lib case.
+          echo "/usr/local/lib" | sudo tee /etc/ld.so.conf.d/zz-local.conf >/dev/null
+          sudo ldconfig
           hash -r
-          echo "pahole now: $(command -v pahole)"
-          pahole --version
+          echo "pahole now: $(command -v pahole) ($(pahole --version 2>&1 | head -n1))"
           case "$(command -v pahole)" in
             /usr/local/bin/*) echo "ok: /usr/local/bin/pahole wins over apt's 1.25" ;;
             *) echo "::warning::/usr/local/bin/pahole is not first in PATH; 6.12 BTF will be disabled" ;;
@@ -160,9 +168,10 @@ jobs:
         with:
           path: ${{ env.WORKSPACE }}/.ccache
           key: ccache-${{ matrix.label }}-${{ github.sha }}
+          # No bare `ccache-` fallback: it let the 6.12 job restore the 6.6
+          # cache, which is useless at best and hides real compiler changes.
           restore-keys: |
             ccache-${{ matrix.label }}-
-            ccache-
 
       - name: Configure ccache
         if: env.ENABLE_CCACHE == 'true'

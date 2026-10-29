@@ -89,8 +89,15 @@ prepare_defconfig() {
 		warn "pahole not found; disabling CONFIG_DEBUG_INFO_BTF for this build"
 		kconf_set_many "$DEFCONFIG_PATH" \
 			CONFIG_DEBUG_INFO_BTF=n CONFIG_DEBUG_INFO_BTF_MODULES=n
+	elif [ -z "$pahole_ver" ]; then
+		# Present but not runnable (e.g. a shared lib it links against went
+		# missing). kconfig calls pahole on init/Kconfig and turns the failure
+		# into a bogus "init/Kconfig: syntax error", so catch it here first.
+		warn "pahole is installed but not runnable; disabling CONFIG_DEBUG_INFO_BTF"
+		kconf_set_many "$DEFCONFIG_PATH" \
+			CONFIG_DEBUG_INFO_BTF=n CONFIG_DEBUG_INFO_BTF_MODULES=n
 	elif ver_ge "$kver" "6.12" && ! ver_ge "$pahole_ver" "1.26"; then
-		warn "pahole '${pahole_ver:-unknown}' is too old for kernel ${kver}; disabling CONFIG_DEBUG_INFO_BTF"
+		warn "pahole '${pahole_ver}' is too old for kernel ${kver}; disabling CONFIG_DEBUG_INFO_BTF"
 		kconf_set_many "$DEFCONFIG_PATH" \
 			CONFIG_DEBUG_INFO_BTF=n CONFIG_DEBUG_INFO_BTF_MODULES=n
 	fi
@@ -143,12 +150,15 @@ build_kernel() {
 		export CCACHE_HARDLINK=false
 		mkdir -p "$CCACHE_DIR"
 		# End-to-end smoke test of the wrapper. A broken cache must degrade to
-		# plain clang instead of turning into a failed kernel build.
-		if ccache "${CLANG_PATH}/bin/clang" --version >/dev/null 2>&1; then
+		# plain clang instead of turning into a failed kernel build, but print
+		# why: a silent skip once cost a whole build cycle to diagnose.
+		local ccache_out
+		if ccache_out=$(ccache "${CLANG_PATH}/bin/clang" --version 2>&1); then
 			cc="ccache ${CLANG_PATH}/bin/clang"
 			info "ccache enabled (dir: ${CCACHE_DIR})"
 		else
 			warn "ccache smoke test failed; continuing without ccache"
+			printf '%s\n' "$ccache_out" | tail -n 5 | sed 's/^/    /' >&2
 		fi
 	fi
 

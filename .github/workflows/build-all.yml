@@ -262,8 +262,27 @@ jobs:
               (cd "$dir" && zip -qr9 "${GITHUB_WORKSPACE}/release/${name}.zip" .)
               echo "  -> packaged as ${name}.zip"
             else
+              # Every profile produces a file literally named `Image` and
+              # `susfs_guard_lkm.ko`. Copying them flat meant the last profile
+              # overwrote the other four, so the Release shipped a single
+              # ambiguous Image. Name each one after its artifact directory,
+              # which already carries the kernel version and build timestamp.
               for f in "${dir}"*; do
-                [ -f "$f" ] && cp "$f" "release/$(basename "$f")"
+                [ -f "$f" ] || continue
+                base=$(basename "$f")
+                case "$base" in
+                  Image)  ext=img ;;
+                  *.ko)   ext=ko ;;
+                  *)      ext=${base##*.}; [ "$ext" = "$base" ] && ext=bin ;;
+                esac
+                out="release/${name}.${ext}"
+                n=1
+                while [ -e "$out" ]; do
+                  out="release/${name}-${n}.${ext}"
+                  n=$((n + 1))
+                done
+                cp "$f" "$out"
+                echo "  -> $(basename "$out")"
               done
             fi
           done
@@ -280,26 +299,38 @@ jobs:
       - name: Create combined release
         uses: softprops/action-gh-release@72f2c25fcb47643c292f7107632f7a47c1df5cd8 # v2.3.2
         with:
-          tag_name: gki-all-${{ steps.date.outputs.build_date }}
-          name: GKI All Profiles · ${{ steps.date.outputs.build_date }}
+          # run_number keeps the tag unique. A bare date tag made a second run
+          # on the same day silently reuse the release, so assets from the
+          # previous layout stayed behind next to the new ones.
+          tag_name: gki-all-${{ steps.date.outputs.build_date }}-r${{ github.run_number }}
+          name: GKI All Profiles · ${{ steps.date.outputs.build_date }} (run ${{ github.run_number }})
           body: |
             ## GKI KernelSU-Next + SUSFS — All Profiles Build
 
             **Build date:** ${{ steps.date.outputs.build_date }}
             **Profiles built:** 5
+            **Source:** `${{ github.sha }}`
 
-            ### Downloads
+            ### What is in this release
 
-            Each `AnyKernel3-*.zip` is a flashable package for the corresponding GKI kernel version.
-            Pick the one matching your device's Android / kernel version:
+            Per kernel version (5 versions) you get three files, each named after
+            its profile so nothing is ambiguous:
 
-            | File | Kernel | Android |
+            | Kind | File | Use |
             | --- | --- | --- |
-            | AnyKernel3-*-android13-5.10-* | Linux 5.10 | Android 13 |
-            | AnyKernel3-*-android13-5.15-* | Linux 5.15 | Android 13 |
-            | AnyKernel3-*-android14-6.1-*  | Linux 6.1  | Android 14 |
-            | AnyKernel3-*-android15-6.6-*  | Linux 6.6  | Android 15 |
-            | AnyKernel3-*-android16-6.12-* | Linux 6.12 | Android 16 |
+            | flashable | `AnyKernel3-*.zip` (Image + `susfs_guard_lkm.ko`) | flash from recovery / KernelFlasher |
+            | raw image | `Image-*.img` | repack into your own `boot.img` |
+            | LKM | `susfs_guard_lkm-*.ko` | `ksud insmod` at runtime |
+
+            Pick the `android*` suffix matching your device's Android / kernel version:
+
+            | Profile | Kernel | Android |
+            | --- | --- | --- |
+            | android13-5.10 | Linux 5.10 | Android 13 |
+            | android13-5.15 | Linux 5.15 | Android 13 |
+            | android14-6.1  | Linux 6.1  | Android 14 |
+            | android15-6.6  | Linux 6.6  | Android 15 |
+            | android16-6.12 | Linux 6.12 | Android 16 |
 
             ### Flashing
 

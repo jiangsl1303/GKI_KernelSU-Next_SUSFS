@@ -29,6 +29,10 @@ build_susfs_lkm() {
 
 	export PATH="${CLANG_PATH:?CLANG_PATH must be set}/bin:${PATH}"
 	local cc="${CLANG_PATH}/bin/clang"
+	# Same as in build.sh: an inherited LOCALVERSION would be appended to the
+	# module vermagic a second time, so the .ko would no longer match the
+	# kernel it was built against.
+	unset LOCALVERSION || true
 
 	# 1. modules_prepare: prepares the out/ tree for external module builds
 	#    (Module.symvers, .config, scripts rebuilt).

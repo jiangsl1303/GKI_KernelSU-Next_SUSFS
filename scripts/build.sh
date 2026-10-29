@@ -135,6 +135,13 @@ build_kernel() {
 	group "Building kernel ${KERNEL_SOURCE_BRANCH}"
 	export PATH="${CLANG_PATH:?CLANG_PATH must be set}/bin:${PATH}"
 	export_env PATH "$PATH"
+	# config.sh exports LOCALVERSION for artifact naming, but kbuild also reads
+	# a LOCALVERSION from the environment and appends it *on top of*
+	# CONFIG_LOCALVERSION. That produced
+	#   6.12.52-KSUN-SUSFS-KSUN-SUSFS-g105b5745f1d7
+	# CONFIG_LOCALVERSION already carries the suffix, so drop the env copy for
+	# the duration of the build. $GITHUB_ENV keeps it for the workflow.
+	unset LOCALVERSION || true
 	export KBUILD_BUILD_HOST=${KBUILD_BUILD_HOST:-Github-Action}
 	export KBUILD_BUILD_USER=${KBUILD_BUILD_USER:-ksun-susfs-builder}
 
